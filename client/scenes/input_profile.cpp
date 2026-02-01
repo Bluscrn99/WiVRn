@@ -299,7 +299,8 @@ input_profile::input_profile(scene & scene, const std::filesystem::path & json_p
 		spdlog::debug("Created entity {}", trail_node.name);
 
 		scene.world.emplace<components::clipped_by_gui>(find_node_by_name(scene.world, "Plane", trail_entity));
-		// scene.world.emplace<components::clipped_by_gui>(trail_entity);
+
+		scene.world.emplace<components::bound_space>(find_node_by_name(scene.world, "Plane", trail_entity), space, 0);
 		scene.world.emplace<components::bound_space>(find_node_by_name(scene.world, "Bone", trail_entity), space, 0);
 		scene.world.emplace<components::bound_space>(find_node_by_name(scene.world, "Bone.001", trail_entity), space, -10'000'000);
 		scene.world.emplace<components::bound_space>(find_node_by_name(scene.world, "Bone.002", trail_entity), space, -20'000'000);
@@ -478,17 +479,17 @@ void input_profile::apply(
 	{
 		// If the ray starts on the wrong side of the GUI, hide it entirely
 		// This assumes the node is a child of the root node
-		if (node.joints.empty())
-		{
-			for (glm::vec4 & plane: pointer_limits)
-			{
-				if (glm::dot(plane, glm::vec4(node.position, 1)) < 0)
-				{
-					scene.get<components::node>(entity).visible = false;
-					return;
-				}
-			}
-		}
+		// if (node.joints.empty())
+		// {
+		// 	for (glm::vec4 & plane: pointer_limits)
+		// 	{
+		// 		if (glm::dot(plane, glm::vec4(node.position, 1)) < 0)
+		// 		{
+		// 			scene.get<components::node>(entity).visible = false;
+		// 			return;
+		// 		}
+		// 	}
+		// }
 
 		size_t nb_clipping_planes = std::min(node.clipping_planes.size(), pointer_limits.size());
 
