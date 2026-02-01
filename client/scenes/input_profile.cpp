@@ -62,17 +62,22 @@ struct visual_response
 
 	details::node_state state;
 };
-} // namespace components
-
-namespace
-{
 
 // Component added to nodes bound to an action space
 struct bound_space
 {
 	xr::spaces space;
+	XrDuration delta_t;
 };
 
+// Component added to node clipped by the GUI
+struct clipped_by_gui
+{
+};
+} // namespace components
+
+namespace
+{
 // clang-format off
 const std::unordered_map<std::string, std::string> input_mappings = {
 	{"xr-standard-squeeze"   , "/input/squeeze/value"    },
@@ -266,7 +271,7 @@ input_profile::input_profile(scene & scene, const std::filesystem::path & json_p
 		auto [e, node] = scene.add_gltf(model, layer_mask_controller);
 		node.name = layout;
 		entity = e;
-		scene.world.emplace<bound_space>(e, space);
+		scene.world.emplace<components::bound_space>(e, space, 0);
 
 		spdlog::debug("Created entity {}", layout);
 	}
@@ -281,16 +286,25 @@ input_profile::input_profile(scene & scene, const std::filesystem::path & json_p
 		else
 			continue;
 
-		auto && [entity, node] = scene.add_gltf(controller_ray_model_name(), layer_mask_ray);
-		node.name = (std::string)layout.key + "_ray";
-		spdlog::debug("Created entity {}", node.name);
+		auto && [ray_entity, ray_node] = scene.add_gltf(controller_ray_model_name(), layer_mask_ray);
+		ray_node.name = (std::string)layout.key + "_ray";
+		spdlog::debug("Created entity {}", ray_node.name);
 
-		scene.world.emplace<bound_space>(entity, space);
+		scene.world.emplace<components::bound_space>(ray_entity, space, 0);
+		// scene.world.emplace<components::clipped_by_gui>(ray_entity);
+		scene.world.emplace<components::clipped_by_gui>(find_node_by_name(scene.world, "Cylinder", ray_entity));
 
-		if (layout.key == "left")
-			left_ray = entity;
-		else if (layout.key == "right")
-			right_ray = entity;
+		auto && [trail_entity, trail_node] = scene.add_gltf("assets://ray-trail.glb", layer_mask_ray);
+		trail_node.name = (std::string)layout.key + "_ray_trail";
+		spdlog::debug("Created entity {}", trail_node.name);
+
+		scene.world.emplace<components::clipped_by_gui>(find_node_by_name(scene.world, "Plane", trail_entity));
+		// scene.world.emplace<components::clipped_by_gui>(trail_entity);
+		scene.world.emplace<components::bound_space>(find_node_by_name(scene.world, "Bone", trail_entity), space, 0);
+		scene.world.emplace<components::bound_space>(find_node_by_name(scene.world, "Bone.001", trail_entity), space, -10'000'000);
+		scene.world.emplace<components::bound_space>(find_node_by_name(scene.world, "Bone.002", trail_entity), space, -20'000'000);
+		scene.world.emplace<components::bound_space>(find_node_by_name(scene.world, "Bone.003", trail_entity), space, -30'000'000);
+		scene.world.emplace<components::bound_space>(find_node_by_name(scene.world, "Bone.004", trail_entity), space, -40'000'000);
 	}
 
 	for (auto & json_response: json_responses)
@@ -362,41 +376,6 @@ static void apply_visual_response(components::node & node, components::details::
 	node.visible = value > 0.5;
 }
 
-static void set_clipping_planes(entt::registry & scene, entt::entity entity, std::span<glm::vec4> clipping_planes)
-{
-	// If the ray starts on the wrong side of the GUI, hide it entirely
-	// This assumes the node is a child of the root node
-	components::node & node = scene.get<components::node>(entity);
-	for (glm::vec4 & plane: clipping_planes)
-	{
-		if (glm::dot(plane, glm::vec4(node.position, 1)) < 0)
-		{
-			scene.get<components::node>(entity).visible = false;
-			return;
-		}
-	}
-
-	// Apply the clipping planes on direct children of the target entity
-	for (auto && [child_entity, child_node]: scene.view<components::node>().each())
-	{
-		if (child_node.parent == entity)
-		{
-			size_t nb_clipping_planes = std::min(child_node.clipping_planes.size(), clipping_planes.size());
-
-			auto copy_results = std::ranges::copy_n(
-			        clipping_planes.begin(),
-			        nb_clipping_planes,
-			        child_node.clipping_planes.begin());
-
-			// Disable the remaining clipping planes
-			std::ranges::fill_n(
-			        copy_results.out,
-			        child_node.clipping_planes.size() - nb_clipping_planes,
-			        glm::vec4(0, 0, 0, 1));
-		}
-	}
-}
-
 void input_profile::apply(
         entt::registry & scene,
         XrSpace world_space,
@@ -407,7 +386,7 @@ void input_profile::apply(
         bool hide_right_ray,
         std::span<glm::vec4> pointer_limits)
 {
-	for (auto && [entity, node, space]: scene.view<components::node, bound_space>().each())
+	for (auto && [entity, node, space]: scene.view<components::node, components::bound_space>().each())
 	{
 		if ((space.space == xr::spaces::grip_left and hide_left_controller) or
 		    (space.space == xr::spaces::aim_left and hide_left_ray) or
@@ -416,7 +395,7 @@ void input_profile::apply(
 		{
 			node.visible = false;
 		}
-		else if (auto location = application::locate_controller(application::space(space.space), world_space, predicted_display_time); location)
+		else if (auto location = application::locate_controller(application::space(space.space), world_space, predicted_display_time + space.delta_t); location)
 		{
 			node.visible = true;
 
@@ -495,6 +474,33 @@ void input_profile::apply(
 		}
 	}
 
-	set_clipping_planes(scene, left_ray, pointer_limits);
-	set_clipping_planes(scene, right_ray, pointer_limits);
+	for (auto && [entity, node]: scene.view<components::node, components::clipped_by_gui>().each())
+	{
+		// If the ray starts on the wrong side of the GUI, hide it entirely
+		// This assumes the node is a child of the root node
+		if (node.joints.empty())
+		{
+			for (glm::vec4 & plane: pointer_limits)
+			{
+				if (glm::dot(plane, glm::vec4(node.position, 1)) < 0)
+				{
+					scene.get<components::node>(entity).visible = false;
+					return;
+				}
+			}
+		}
+
+		size_t nb_clipping_planes = std::min(node.clipping_planes.size(), pointer_limits.size());
+
+		auto copy_results = std::ranges::copy_n(
+		        pointer_limits.begin(),
+		        nb_clipping_planes,
+		        node.clipping_planes.begin());
+
+		// Disable the remaining clipping planes
+		std::ranges::fill_n(
+		        copy_results.out,
+		        node.clipping_planes.size() - nb_clipping_planes,
+		        glm::vec4(0, 0, 0, 1));
+	}
 }

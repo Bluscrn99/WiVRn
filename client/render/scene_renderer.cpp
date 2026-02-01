@@ -732,7 +732,7 @@ vk::raii::Pipeline scene_renderer::create_pipeline(const pipeline_info & info)
 	                .ColorBlendState = {vk::PipelineColorBlendStateCreateInfo{}},
 	                .ColorBlendAttachments = {vk::PipelineColorBlendAttachmentState{
 	                        .blendEnable = info.blend_enable,
-	                        .srcColorBlendFactor = vk::BlendFactor::eSrcAlpha,
+	                        .srcColorBlendFactor = vk::BlendFactor::eOne,
 	                        .dstColorBlendFactor = vk::BlendFactor::eOneMinusSrcAlpha,
 	                        .colorBlendOp = vk::BlendOp::eAdd,
 	                        .srcAlphaBlendFactor = vk::BlendFactor::eOne,
